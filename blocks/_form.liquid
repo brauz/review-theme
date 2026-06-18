@@ -1,0 +1,765 @@
+{% comment %}
+  This block is used to display the Add to Cart form specifically on the product page. It includes:
+  - Product variant selection
+  - Size guide integration 
+  - Add to Cart button
+  - Out of stock notification signup
+  - Pre-release product handling
+  - Klaviyo integration for back in stock notifications
+  - Wishlist functionality
+  The form adapts its display and behavior based on product availability, pre-release status, and selected options.
+  Content is rendered within the product-block-wrapper.liquid snippet.
+{% endcomment %}
+
+{%- capture content -%}
+    {%- liquid
+        # Form Settings
+        assign id__product_form = 'product-form-' | append: product.id
+        assign variant = product.selected_variant
+        assign button_colour_atc = block.settings.button_colour
+        assign button_colour_notify = block.settings.button_colour_notify
+        if customer and customer.b2b?
+            assign wholesale_product = true
+        else
+            assign wholesale_product = false
+        endif
+
+        # Availability Status
+        assign availability_status = product.metafields.custom.availability_status | handleize
+        assign pre_release = false
+        assign stock_notification = false
+
+        if availability_status == 'coming-soon'
+            assign releaseDate = product.metafields.custom.release_date
+            assign dateTime = 'now' | date: '%s'
+            if releaseDate != blank
+                assign endTime = releaseDate | date: '%s'
+                if endTime > dateTime
+                    assign pre_release = true
+                endif
+            else
+                assign pre_release = true
+            endif
+        elsif availability_status == 'notify-when-back-in-stock'
+            assign stock_notification = true
+        endif
+
+        # Back In Stock Form Settings
+        assign klaviyo_api_key = shop.metafields.klaviyo.api_key | default: 'RVPiT4'
+        assign klaviyo_list_id_custom = block.settings.klaviyo_list_id_custom
+        assign klaviyo_list_id_pre_release = block.settings.klaviyo_list_id_pre_release
+        assign klaviyo_sub_type = block.settings.klaviyo_sub_type
+
+        assign out_of_stock_success = block.settings.out_of_stock_success | default: "We'll Notify You Of Restock"
+        assign coming_soon_success = block.settings.coming_soon_success | default: "We'll Notify You When Available"
+        assign wishlist_select_size_message = block.settings.wishlist_select_size_message | default: 'Please select a size to add to wishlist'
+
+        # Gift Card Default Option Name
+        assign option_name = 'Size'
+        if product.template_suffix == 'gift-card'
+            assign option_name = 'Value'
+        endif
+
+        # Size Guide
+        assign collectionList = product.collections
+        assign tagList = product.tags
+        assign validGuide = false
+
+        paginate shop.metaobjects.size_guide.values by 100
+            assign object_array = shop.metaobjects.size_guide.values
+            assign sorted_object = object_array | sort_natural: 'priority'
+        endpaginate
+
+        for object in sorted_object
+            assign validGuide = false
+
+            for collectionItem in object.collections.value
+                for item in collectionList
+                if collectionItem.handle == item.handle
+                    assign validGuide = true
+                endif
+                endfor
+            endfor
+
+            if validGuide == false
+                for tags in object.tags.value
+                for tag in tagList
+                    if tags == tag
+                    assign validGuide = true
+                    endif
+                endfor
+                endfor
+            endif
+
+            if validGuide == false
+                for productItem in object.products.value
+                if productItem.handle == product.handle
+                    assign validGuide = true
+                endif
+                endfor
+            endif
+
+            if validGuide
+                assign size_guide = object
+                break
+            endif
+        endfor
+
+        assign size_guide_tabs = size_guide.tabs.value
+        assign size_guide_id = 'size-modal-' | append: size_guide.system.id
+    -%}
+
+    {%- capture form_dataset -%}
+        {% if klaviyo_api_key != blank %}
+            data-api-key="{{- klaviyo_api_key -}}"
+            {% if pre_release and klaviyo_list_id_pre_release != blank %}
+                data-form-type="custom"
+                data-endpoint="https://a.klaviyo.com/client/subscriptions"
+                data-list-id="{{- klaviyo_list_id_pre_release -}}"
+            {% elsif klaviyo_sub_type == 'back-in-stock' %}
+                data-form-type="back-in-stock"
+                data-endpoint="https://a.klaviyo.com/client/back-in-stock-subscriptions/"
+            {% else %}
+                data-form-type="custom"
+                data-endpoint="https://a.klaviyo.com/client/subscriptions"
+                data-list-id="{{- klaviyo_list_id_custom -}}"
+            {% endif %}
+        {% endif %}
+        {% if product.template_suffix == 'gift-card' %}
+            data-product-type="gift-card"
+        {% endif %}
+    {%- endcapture -%}
+
+    {%- capture form_variant_selector -%}
+        {% comment %} Variant Selector Grid {% endcomment %}
+        {% if product.has_only_default_variant %}
+            <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
+        {% else %}
+            <div>
+                {%- assign option = product.options_by_name[option_name] -%}
+                {% assign data_pair_form = 'product-sticky-atc-form-' | append: product.id %}
+                {% if pre_release %}
+                    {%- render 'field-variant-selector-grid', 
+                        option: option,
+                        selected_variant: variant,
+                        form_id: id__product_form,
+                        url_sync: true,
+                        product: product,
+                        data_pair_form: data_pair_form,
+                        stock_override: true,
+                        price_selector: 'product-price'
+                    -%}
+                {% else %}
+                    {%- render 'field-variant-selector-grid', 
+                        option: option,
+                        selected_variant: variant,
+                        form_id: id__product_form,
+                        url_sync: true,
+                        product: product,
+                        data_pair_form: data_pair_form,
+                        price_selector: 'product-price'
+                    -%}
+                {% endif %}
+            </div>
+        {% endif %}
+    {%- endcapture -%}
+
+    {%- capture form_atc_buttons -%}
+        {% comment %} Add to Cart/Find In Store/Wishlist Buttons {% endcomment %}
+        <div class="flex flex-wrap gap-1 mt-0.75">
+            {%- assign button_class = "shrink-0 w-full btn btn-l" -%}
+            <div data-hide-on-success data-ui="visible" class="shrink-0 hidden data-visible:flex w-full">
+                {%- unless pre_release -%}
+                    <button
+                        type="submit"
+                        data-action="add-to-cart"
+                        class="!hidden group-data-visible/form:!flex group-data-disabled/form:!hidden {% if button_colour_atc == 'btn-secondary' %}btn-primary btn-border{% else %}{{ button_colour_atc }} btn-fill{% endif %} {{ button_class }}"
+                        aria-label="Add to Bag"
+                    >
+                        <span>{% if product.template_suffix == 'gift-card' %}Add Amount & Details{% else %}Add to Bag{% endif %}</span>
+                    </button>
+                {%- endunless -%}
+                {% if pre_release or stock_notification %}
+                    <button class="!hidden group-data-visible/form:!hidden group-data-disabled/form:!flex {% if button_colour_notify == 'btn-secondary' %}btn-primary btn-border{% else %}{{ button_colour_notify }} btn-fill{% endif %} {{ button_class }}"
+                        data-action="notify"
+                        type="submit"
+                        aria-label="Notify Me When Available"
+                    >
+                        <span>Notify Me When Available</span>
+                    </button>
+                {% else %}
+                    <button class="!hidden group-data-visible/form:!hidden group-data-disabled/form:!flex {% if button_colour_atc == 'btn-secondary' %}btn-primary btn-border{% else %}{{ button_colour_atc }} btn-fill{% endif %} {{ button_class }}"
+                        disabled
+                    >
+                        <span>Out of Stock</span>
+                    </button>
+                {% endif %}
+                <button
+                    type="button"
+                    class="!flex group-data-visible/form:!hidden group-data-disabled/form:!hidden btn-tertiary {{ button_class }} btn-fill"
+                    aria-label="{% if pre_release or stock_notification %}Notify Me When Available{% else %}Select {{ option_name -}}{% endif %}"
+                    data-modal-role="open"
+                    data-modal-parent="select-size-text"
+                >
+                    <span>{% if pre_release or stock_notification %}Notify Me When Available{% else %}Select {{ option_name -}}{% endif %}</span>
+                </button>
+            </div>
+            {% if klaviyo_api_key != blank and stock_notification or pre_release %}
+                <div 
+                    data-show-on-success
+                    data-success-message
+                    data-message="{% if pre_release %}{{ coming_soon_success }}{% else %}{{ out_of_stock_success }}{% endif %}" 
+                    class="shrink-0 w-full hidden data-visible:flex"
+                >
+                    <div class="{{ button_class }} btn-custom pointer-events-none !text-brand-white !bg-page-success">
+                        <div class="shrink-0 size-[14px] children:size-full">
+                            {% render 'icon', id: 'success' %}
+                        </div>
+                        <span></span>
+                    </div>
+                </div>
+            {% endif %}
+            {% unless pre_release or product.template_suffix == 'gift-card' %}
+                <div class="w-full {% unless product.template_suffix == 'gift-card' %}max-w-[calc((100%-1rem)/2)]{% endunless %}">
+                    <button 
+                        type="button"
+                        class="btn btn-primary btn-border btn-m w-full"
+                        data-modal-parent="modal-find-in-store"
+                        data-modal-role="open"
+                        aria-label="Find In Store"
+                    >
+                        <span>Find In Store</span>
+                    </button>
+                </div>
+            {% endunless %}
+            {% unless product.template_suffix == 'gift-card' %}
+                <div class="w-full {% if pre_release != true %}max-w-[calc((100%-1rem)/2)]{% endif %}">
+                    {%- render 'wk-headless-wishlist-button' -%}
+                </div>
+            {% endunless %}
+        </div>
+    {%- endcapture -%}
+
+    <x-modal
+        class="group/form"
+        data-id="{{ id__product_form }}"
+        {% unless wholesale_product %}
+            {% if variant != blank or product.has_only_default_variant %}
+                {% if variant.available and pre_release != true %}
+                    data-ui="visible"
+                {% else %}
+                    data-ui="disabled"
+                {% endif %}
+            {% endif %}
+        {% endunless %}
+    >
+        {% if product.template_suffix == 'gift-card' %}
+            <gift-card-form id="{{ id__product_form }}" class="flex flex-col w-full">
+                {% comment %} Required Quantity input {% endcomment %}
+                <input type="hidden" name="quantity" value="1" aria-label="Quantity">
+
+                <div class="flex justify-between gap-x-1 relative">
+                    {% unless product.has_only_default_variant %}
+                        <span class="text-m font-bold text-brand-sale mb-0.5 whitespace-nowrap text-ellipsis overflow-hidden">
+                            Select Value
+                        </span>
+                    {% endunless %}
+                </div>
+
+                {{- form_variant_selector -}}
+
+                {% comment %} Gift Card Form {% endcomment %}
+                <div>
+                    {%- render 'gift-card-form', form_id: id__product_form -%}
+                </div>
+
+                {{- form_atc_buttons -}}
+            </gift-card-form>
+        {% elsif wholesale_product %}
+            <bulk-product-form
+                id="{{ id__product_form }}"
+                class="flex flex-col product-form"
+                data-product-id="{{ product.id }}" 
+                data-product-title="{{ product.title | escape }}"
+                >
+                <ul class="w-full text-left border-separate border-spacing-y-0.5">
+                    <li class="grid grid-cols-bulk-form gap-x-1.5 items-center w-full pb-1 border-b border-borders-default">
+                        <div>
+                            <h3 class="paragraph-m">Size</h3>
+                        </div>
+                        <div class="text-right">
+                            <h3 class="paragraph-m">Quantity</h3>
+                        </div>
+                        <div class="text-right">
+                            <h3 class="paragraph-m">Total</h3>
+                        </div>
+                    </li>
+                    {% for variant in product.variants %}
+                        <li 
+                            data-variant 
+                            data-variant-id="{{ variant.id }}" 
+                            data-variant-price="{{ variant.price }}" 
+                            {% if customer.b2b? and variant.quantity_price_breaks.size > 0 %}
+                            data-variant-b2b-price="{{ variant.quantity_price_breaks.first.price }}"
+                            data-variant-quantity-breaks='[{% for break in variant.quantity_price_breaks %}{"minimum_quantity":{{ break.minimum_quantity }},"price":{{ break.price }}}{% unless forloop.last %},{% endunless %}{% endfor %}]'
+                            {% endif %}
+                            id="{{ id__product_form }}-{{ variant.id }}" 
+                            class="py-0.25 border-b border-borders-default"
+                        >
+                            <x-modal
+                                data-id="{{ id__product_form }}-{{ variant.id }}"
+                                class="group/form-variant grid grid-cols-bulk-form gap-x-1.5 items-center w-full min-h-[44px]"
+                            >
+                                <div>
+                                    <p class="paragraph-s">{{ variant.option2 }}</p>
+                                </div>
+                                <div class="text-center">
+                                    {% if variant.available %}
+                                        <div data-quantity-container class="flex border border-borders-default group-data-visible/form-variant:border-neutral-primary transition-all">
+                                            <button 
+                                                type="button" 
+                                                data-quantity-minus 
+                                                class="btn btn-primary btn-transparent btn-square w-[36px] !border-0  disabled:!opacity-50 disabled:cursor-not-allowed" 
+                                                aria-label="Decrease quantity"
+                                            >
+                                                <div class="size-fit children:w-[12px] children:h-[2px]">
+                                                    {%- render 'icon', id: 'minus' -%}
+                                                </div>
+                                            </button>
+                                            <input 
+                                                type="number" 
+                                                data-quantity-input 
+                                                name="updates[{{ variant.id }}]" 
+                                                value="0" 
+                                                min="0" 
+                                                max="{{ variant.inventory_quantity }}" 
+                                                class="grow flex items-center justify-center text-s w-2 text-center p-0 border-0 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-0 focus:ring-offset-0" 
+                                                data-variant-id="{{ variant.id }}"
+                                                readonly="readonly"
+                                                aria-label="Quantity for {{ variant.title }}"
+                                            >
+                                            <button 
+                                                type="button" 
+                                                data-quantity-plus 
+                                                class="btn btn-primary btn-transparent btn-square w-[36px] !border-0  disabled:!opacity-50 disabled:cursor-not-allowed" 
+                                                aria-label="Increase quantity"
+                                            >
+                                                <div class="size-fit children:size-[12px]">
+                                                    {%- render 'icon', id: 'plus' -%}
+                                                </div>
+                                            </button>
+                                        </div>
+                                    {% else %}
+                                        <span class="paragraph-s text-type-black-tertiary">Out of stock</span>
+                                    {% endif %}
+                                </div>
+                                <div class="justify-self-end text-right">
+                                    {% if variant.available %}
+                                        <p data-variant-total class="paragraph-s text-type-black-secondary group-data-visible/form-variant:text-type-black-primary transition-all" data-variant-id="{{ variant.id }}">$0.00</p>
+                                    {% else %}
+                                        <a href="{{ settings.wholesale_contact_url | default: '/' }}" class="btn btn-tertiary btn-text btn-m w-fit !text-2xs !px-0" target="_blank" rel="noopener noreferrer" aria-label="Contact Us">
+                                            <span class="text-line">Contact Us</span>
+                                        </a>
+                                    {% endif %}
+                                </div>
+                            </x-modal>
+                        </li>
+                    {% endfor %}
+                </ul>
+
+                {% comment %} Add to Cart/Wishlist Buttons {% endcomment %}
+                <div data-hide-on-success data-ui="visible" class="hidden data-visible:flex gap-x-0.5 mt-0.75">
+                    {%- assign button_class = "grow btn btn-l" -%}
+                    {%- unless pre_release -%}
+                        <button
+                            type="submit"
+                            data-action="add-to-cart"
+                            class="!hidden group-data-visible/form:!flex group-data-disabled/form:!hidden {% if button_colour_atc == 'btn-secondary' %}btn-primary btn-border{% else %}{{ button_colour_atc }} btn-fill{% endif %} {{ button_class }}"
+                            aria-label="Add to Bag"
+                        >
+                            <span>
+                                Add to Bag
+                            </span>
+                        </button>
+                    {%- endunless -%}
+                    <button 
+                        class="!flex group-data-visible/form:!hidden group-data-disabled/form:!hidden btn-tertiary {{ button_class }} btn-fill pointer-events-none"
+                        disabled
+                        aria-label="Select {{ option_name }}"
+                    >
+                        <span>
+                            Select {{ option_name -}}
+                        </span>
+                    </button>
+                </div>
+            </bulk-product-form>
+        {% else %}
+            <enhanced-product-form id="{{ id__product_form }}" 
+                class="flex flex-col scroll-mt-32 product-form"
+                {{ form_dataset }}
+            >
+                {% comment %} Required Quantity input {% endcomment %}
+                <input type="hidden" name="quantity" value="1" aria-label="Quantity">
+
+                {% comment %} Universal Size Selector or Regular Variant Selector {% endcomment %}
+                {% if product.metafields.utopia.universal_size_map.value[0] %}
+                    {%- liquid
+                        assign defaultSize = product.metafields.utopia.default_size_range
+                        if defaultSize == 'EURO'
+                          assign defaultSize = 'EU'
+                        endif
+                        assign option = product.options_by_name[option_name]
+                        assign data_pair_form = 'product-sticky-atc-form-' | append: product.id
+                    -%}
+                    
+                    {%- render 'universal-size-selector', 
+                        option: option,
+                        product: product,
+                        selected_variant: variant,
+                        form_id: id__product_form,
+                        selected_size: defaultSize,
+                        url_sync: true,
+                        data_pair_form: data_pair_form,
+                        price_selector: 'product-price',
+                        stock_override: pre_release
+                    -%}
+                {% else %}
+                    <div class="flex flex-col relative mb-0.75">
+                        {% unless product.has_only_default_variant %}
+                            <x-modal data-id="select-size-text" class="group/select-size-text">
+                                <span class="text-m font-bold group-data-visible/select-size-text:text-brand-sale whitespace-nowrap text-ellipsis overflow-hidden transition-all">
+                                    Select Size
+                                </span>
+                            </x-modal>
+                        {% endunless %}
+                    </div>
+
+                    {{- form_variant_selector -}}
+                {% endif %}
+
+                <div class="flex items-center justify-end gap-x-1 relative w-full mt-0.75">
+                    {% if product.metafields.products.fit_label != blank or product.metafields.products.fit_description != blank %}
+                        <div class="flex grow">
+                            <p class="paragraph-s">
+                                {% if product.metafields.products.fit_label != blank %}
+                                    <span class="font-bold">{{ product.metafields.products.fit_label }}</span>
+                                {% endif %}
+                                {% if product.metafields.products.fit_description != blank %}
+                                    <span class="text-type-black-secondary">{{ product.metafields.products.fit_description }}</span>
+                                {% endif %}
+                            </p>
+                        </div>
+                    {% endif %}
+                    {% if size_guide_tabs != blank %}
+                        <button 
+                            type="button" 
+                            class="btn btn-primary btn-text btn-s link-line lined link-fade w-fit !p-0 !gap-x-0.25" 
+                            data-modal-parent="{{ size_guide_id }}" 
+                            data-modal-role="open" 
+                            aria-label="Size Guide"
+                        >
+                            <div class="flex w-[17px] h-fit children:w-full children:h-auto">
+                                {% render 'icon', id: 'size' %}
+                            </div>
+                            <span>Size Guide</span>
+                        </button>
+                    {% endif %}
+                </div>
+
+                {% comment %} Wishlist Warning Message {% endcomment %}
+                <x-modal data-id="wishlist-message" class='hidden group-data-disabled/form:hidden group-data-visible/form:hidden data-visible:block w-full mt-0.75 mb-1.5'>
+                    <p class="flex w-full paragraph-s px-1 py-0.5 text-type-error bg-page-error">{{ wishlist_select_size_message }}</p>
+                </x-modal>
+
+                {% comment %} Klaviyo Email Input {% endcomment %}
+                {% if klaviyo_api_key != blank and stock_notification or pre_release %}
+                    {% if pre_release %}
+                        {% assign klaviyo_email_input_class = "flex pointer-events-none group-data-disabled/form:pointer-events-auto data-visible:max-h-12.5 data-visible:my-0.75" %}
+                    {% else %}
+                        {% assign klaviyo_email_input_class = "hidden data-visible:flex" %}
+                    {% endif %}
+                    <x-modal data-hide-on-success data-ui="visible" data-id="klaviyo-email-input" class="{{ klaviyo_email_input_class }} max-h-0 group-data-disabled/form:max-h-12.5 group-data-disabled/form:my-0.75 flex-col gap-y-1 overflow-hidden transition-all">
+                        <div class="field-container field-m w-full">
+                            <input type="email" name="email" class="w-full field-input text-m" placeholder="Email Address" {% if customer.email %}value="{{ customer.email }}"{% endif %} aria-label="Email">
+                        </div>
+                    </x-modal>
+                {% endif %}
+
+                {% comment %} Product/Klaviyo Error Message {% endcomment %}
+                <p data-error-message data-hide-on-success class="overflow-hidden transition-all data-visible:max-h-12 max-h-0 paragraph-s text-type-error not-empty:mb-1.5"></p>
+                
+                {{- form_atc_buttons -}}
+            </enhanced-product-form>
+        {% endif %}
+    </x-modal>
+{% endcapture %}
+
+{%- render 'product-block-wrapper', content: content -%}
+
+{% schema %}
+{
+  "name": "Product Form",
+  "tag": null,
+  "settings": [
+    {
+        "type": "header",
+        "content": "Button Settings"
+    },
+    {
+        "type": "select",
+        "id": "button_colour",
+        "label": "ATC Button Colour",
+        "options": [
+    { "value": "btn-primary", "label": "Primary" },
+    { "value": "btn-secondary", "label": "Secondary" },
+    { "value": "btn-tertiary", "label": "Tertiary" },
+    { "value": "btn-accent", "label": "Accent" },
+    { "value": "btn-custom", "label": "Custom" }
+],
+        "default": "btn-primary"
+    },
+    {
+        "type": "select",
+        "id": "button_colour_notify",
+        "label": "Notify Button Colour",
+        "options": [
+    { "value": "btn-primary", "label": "Primary" },
+    { "value": "btn-secondary", "label": "Secondary" },
+    { "value": "btn-tertiary", "label": "Tertiary" },
+    { "value": "btn-accent", "label": "Accent" },
+    { "value": "btn-custom", "label": "Custom" }
+],
+        "default": "btn-primary"
+    },
+    {
+        "type": "header",
+        "content": "Klaviyo Settings"
+    },
+    {
+        "type": "select",
+        "id": "klaviyo_sub_type",
+        "label": "Klaviyo Subscription Type",
+        "info": "Determines whether the notification is for Back in Stock, or a custom Klaviyo list.",
+        "options": [
+            { "value": "back-in-stock", "label": "Back in Stock" },
+            { "value": "custom", "label": "Custom" }
+        ],
+        "default": "back-in-stock"
+    },
+    {
+        "type": "text",
+        "id": "klaviyo_list_id_custom",
+        "label": "BIS Custom Klaviyo List ID",
+        "default": "VM52UA",
+        "info": "Enter the Klaviyo list ID to subscribe to, found in the URL of the list in Klaviyo. e.g 'VM52UA'",
+        "visible_if": "{{ block.settings.klaviyo_sub_type == 'custom' }}"
+    },
+    {
+        "type": "text",
+        "id": "klaviyo_list_id_pre_release",
+        "label": "Pre-Release Klaviyo List ID",
+        "info": "Enter the Klaviyo list ID to subscribe to, found in the URL of the list in Klaviyo. e.g 'VM52UA'. Leave blank to default to BIS list."
+    },
+    {
+        "type": "header",
+        "content": "Message Content"
+    },
+    {
+        "type": "text",
+        "id": "out_of_stock_success",
+        "label": "OOS Notify Success Message",
+        "default": "We'll Notify You Of Restock"
+    },
+    {
+        "type": "text",
+        "id": "wishlist_select_size_message",
+        "label": "Wishlist Select Size Message",
+        "default": "Please select a size to add to wishlist"
+    },
+    {
+        "type": "text",
+        "id": "coming_soon_success",
+        "label": "Coming Soon Success Message",
+        "default": "We'll Notify You When Available"
+    },
+    {
+    "type": "header",
+    "content": "Desktop Padding",
+    "visible_if": "{{ block.settings.override_padding != true }}"
+},
+{
+    "type": "range",
+    "id": "container_inline_padding",
+    "label": "Padding (Horizontal)",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 32,
+    "visible_if": "{{ block.settings.override_padding != true }}"
+},
+{
+    "type": "range",
+    "id": "container_block_padding",
+    "label": "Padding (Vertical)",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 32,
+    "visible_if": "{{ block.settings.override_padding != true }}"
+},
+{
+    "type": "header",
+    "content": "Mobile Padding",
+    "visible_if": "{{ block.settings.override_padding != true }}"
+},
+{
+    "type": "range",
+    "id": "container_inline_padding_mb",
+    "label": "Padding (Horizontal)",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 16,
+    "visible_if": "{{ block.settings.override_padding != true }}"
+},
+{
+    "type": "range",
+    "id": "container_block_padding_mb",
+    "label": "Padding (Vertical)",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 24,
+    "visible_if": "{{ block.settings.override_padding != true }}"
+},
+{
+    "type": "header",
+    "content": "Override Padding",
+    "info": "Override the above padding for this block. This will allow you to set top, right, bottom, and left padding individually."
+},
+{
+    "type": "checkbox",
+    "id": "override_padding",
+    "label": "Override Padding",
+    "default": false
+},
+{
+    "type": "header",
+    "content": "Desktop Padding",
+    "visible_if": "{{ block.settings.override_padding }}"
+},
+{
+    "type": "range",
+    "id": "container_top_padding",
+    "label": "Top Padding",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 0,
+    "visible_if": "{{ block.settings.override_padding }}"
+},
+{
+    "type": "range",
+    "id": "container_right_padding",
+    "label": "Right Padding",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 0,
+    "visible_if": "{{ block.settings.override_padding }}"
+},
+{
+    "type": "range",
+    "id": "container_bottom_padding",
+    "label": "Bottom Padding",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 0,
+    "visible_if": "{{ block.settings.override_padding }}"
+},
+{
+    "type": "range",
+    "id": "container_left_padding",
+    "label": "Left Padding",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 0,
+    "visible_if": "{{ block.settings.override_padding }}"
+},
+{
+    "type": "header",
+    "content": "Mobile Padding",
+    "visible_if": "{{ block.settings.override_padding }}"
+},
+{
+    "type": "range",
+    "id": "container_top_padding_mb",
+    "label": "Top Padding",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 0,
+    "visible_if": "{{ block.settings.override_padding }}"
+},
+{
+    "type": "range",
+    "id": "container_right_padding_mb",
+    "label": "Right Padding",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 0,
+    "visible_if": "{{ block.settings.override_padding }}"
+},
+{
+    "type": "range",
+    "id": "container_bottom_padding_mb",
+    "label": "Bottom Padding",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 0,
+    "visible_if": "{{ block.settings.override_padding }}"
+},
+{
+    "type": "range",
+    "id": "container_left_padding_mb",
+    "label": "Left Padding",
+    "min": 0,
+    "max": 200,
+    "step": 2,
+    "default": 0,
+    "visible_if": "{{ block.settings.override_padding }}"
+},
+{
+    "type": "header",
+    "content": "Border Settings"
+},
+{
+  "type": "select",
+  "id": "border_type",
+  "label": "Border Type",
+  "options": [
+    { "value": "border-0", "label": "None" },
+    { "value": "border-t", "label": "Top" },
+    { "value": "border-r", "label": "Right" },
+    { "value": "border-b", "label": "Bottom" },
+    { "value": "border-l", "label": "Left" },
+    { "value": "border-x", "label": "Left/Right" },
+    { "value": "border-y", "label": "Top/Bottom" },
+    { "value": "border", "label": "All" }
+  ],
+  "default": "border-0"
+},
+{
+  "type": "color",
+  "id": "border_colour",
+  "label": "Border Colour",
+  "visible_if": "{{ block.settings.border_type != 'border-0' }}"
+}
+  ],
+  "presets": [{ "name": "Product Form" }]
+}
+{% endschema %}
