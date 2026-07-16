@@ -220,23 +220,15 @@
                 </div>
             {% endif %}
             {% unless pre_release or product.template_suffix == 'gift-card' %}
-                <div class="w-full {% unless product.template_suffix == 'gift-card' %}max-w-[calc((100%-1rem)/2)]{% endunless %}">
-                    <button 
-                        type="button"
-                        class="btn btn-primary btn-border btn-m w-full"
-                        data-modal-parent="modal-find-in-store"
-                        data-modal-role="open"
-                        aria-label="Find In Store"
-                    >
-                        <span>Find In Store</span>
-                    </button>
+                <div class="w-full {% unless product.template_suffix == 'gift-card' %}max-w-[100%]{% endunless %}">
+                    {% render 'brauz-find-in-store' %}
                 </div>
             {% endunless %}
-            {% unless product.template_suffix == 'gift-card' %}
+            {% comment %} {% unless product.template_suffix == 'gift-card' %}
                 <div class="w-full {% if pre_release != true %}max-w-[calc((100%-1rem)/2)]{% endif %}">
                     {%- render 'wk-headless-wishlist-button' -%}
                 </div>
-            {% endunless %}
+            {% endunless %} {% endcomment %}
         </div>
     {%- endcapture -%}
 
